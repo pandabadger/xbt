@@ -78,13 +78,19 @@ void Ctransaction::send_announce(data_ref r)
   }
   tracker_input_t ti;
   ti.downloaded_ = read_int(8, &r[utia_downloaded], r.end());
-  ti.event_ = static_cast<tracker_input_t::event_t>(read_int(4, &r[utia_event], r.end()));
+  const auto event = read_int(4, &r[utia_event], r.end());
+  ti.event_ = event >= tracker_input_t::e_none && event <= tracker_input_t::e_stopped ? static_cast<tracker_input_t::event_t>(event) : tracker_input_t::e_none;
   ti.info_hash_.assign(reinterpret_cast<const char*>(&r[utia_info_hash]), 20);
   memcpy(ti.ipv6_.data(), m_a.sin6_addr.s6_addr, 16);
   ti.left_ = read_int(8, &r[utia_left], r.end());
   memcpy(ti.peer_id_.data(), &r[utia_peer_id], 20);
   ti.port_ = htons(read_int(2, &r[utia_port], r.end()));
   ti.uploaded_ = read_int(8, &r[utia_uploaded], r.end());
+  if (!ti.valid())
+  {
+    send_error(r, "invalid announce");
+    return;
+  }
   std::string error = srv_insert_peer(ti, true, NULL);
   if (!error.empty())
   {
@@ -100,9 +106,18 @@ void Ctransaction::send_announce(data_ref r)
   write_int(4, d + utoa_interval, srv_config().announce_interval_);
   write_int(4, d + utoa_leechers, torrent->leechers);
   write_int(4, d + utoa_seeders, torrent->seeders);
-  mutable_str_ref peers(d + utoa_size, 300);
-  torrent->select_peers(peers, ti);
-  send(data_ref(d, peers.begin()));
+  if (is_ipv4(ti.ipv6_)) 
+  {
+    mutable_str_ref peers(d + utoa_size, 300);
+    torrent->select_peers(peers, ti);
+    send(data_ref(d, peers.begin()));
+  } 
+  else 
+  {
+    mutable_str_ref peers6(d + utoa_size, 900);
+    torrent->select_peers6(peers6, ti);
+    send(data_ref(d, peers6.begin()));
+  }
 }
 
 void Ctransaction::send_scrape(data_ref r)
